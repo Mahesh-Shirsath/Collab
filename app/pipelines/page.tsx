@@ -21,17 +21,9 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { buildLogsApi, type BuildLogResponse } from "@/lib/api"
 
-interface Pipeline {
-  id: string
-  type: string
-  status: "running" | "completed" | "failed"
-  startTime: string
-  endTime?: string
-  config: any
-  command?: string
-  jenkinsJob: string
-}
+interface Pipeline extends BuildLogResponse {}
 
 export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -51,9 +43,18 @@ export default function PipelinesPage() {
     filterPipelines()
   }, [pipelines, searchTerm, statusFilter, typeFilter])
 
-  const loadPipelines = () => {
-    const storedPipelines = JSON.parse(localStorage.getItem("pipelines") || "[]")
-    setPipelines(storedPipelines)
+  const loadPipelines = async () => {
+    try {
+      const pipelines = await buildLogsApi.getAll({ limit: 100 })
+      setPipelines(pipelines)
+    } catch (error) {
+      console.error("Failed to load pipelines:", error)
+      toast({
+        title: "Load Failed",
+        description: "Failed to load pipeline data from server.",
+        variant: "destructive",
+      })
+    }
   }
 
   const filterPipelines = () => {
@@ -123,23 +124,40 @@ export default function PipelinesPage() {
     window.open(`https://jenkins.example.com/job/${pipeline.jenkinsJob}/${pipeline.id}/console`, "_blank")
   }
 
-  const deletePipeline = (pipelineId: string) => {
-    const updatedPipelines = pipelines.filter((p) => p.id !== pipelineId)
-    setPipelines(updatedPipelines)
-    localStorage.setItem("pipelines", JSON.stringify(updatedPipelines))
-    toast({
-      title: "Pipeline Deleted",
-      description: "Pipeline record has been removed.",
-    })
+  const deletePipeline = async (buildId: string) => {
+    try {
+      await buildLogsApi.delete(buildId)
+      await loadPipelines() // Refresh the list
+      toast({
+        title: "Pipeline Deleted",
+        description: "Pipeline record has been removed.",
+      })
+    } catch (error) {
+      console.error("Delete failed:", error)
+      toast({
+        title: "Delete Failed",
+        description: "Failed to delete pipeline record.",
+        variant: "destructive",
+      })
+    }
   }
 
-  const clearAllPipelines = () => {
-    setPipelines([])
-    localStorage.setItem("pipelines", JSON.stringify([]))
-    toast({
-      title: "All Pipelines Cleared",
-      description: "All pipeline records have been removed.",
-    })
+  const clearAllPipelines = async () => {
+    try {
+      await buildLogsApi.clearAll()
+      setPipelines([])
+      toast({
+        title: "All Pipelines Cleared",
+        description: "All pipeline records have been removed.",
+      })
+    } catch (error) {
+      console.error("Clear failed:", error)
+      toast({
+        title: "Clear Failed",
+        description: "Failed to clear pipeline records.",
+        variant: "destructive",
+      })
+    }
   }
 
   const exportPipelines = () => {
@@ -343,7 +361,7 @@ export default function PipelinesPage() {
                   <div className="space-y-4">
                     {filteredPipelines.map((pipeline) => (
                       <Card
-                        key={pipeline.id}
+                        key={pipeline.build_id}
                         className={`${getTypeColor(pipeline.type)} transition-all hover:shadow-md`}
                       >
                         <CardContent className="p-4">
@@ -380,7 +398,7 @@ export default function PipelinesPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => deletePipeline(pipeline.id)}
+                                onClick={() => deletePipeline(pipeline.build_id)}
                                 className="text-red-600 hover:text-red-700"
                               >
                                 <Trash2 className="w-4 h-4" />

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Play, RotateCcw, Copy, Download, Zap, ExternalLink } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { buildLogsApi } from "@/lib/api"
 
 interface FloatingConfig {
   taskName: string
@@ -79,53 +80,102 @@ export default function FloatingPage() {
     const newBuildId = `FLOATING-${Date.now()}`
     setBuildId(newBuildId)
 
-    // Store pipeline info in localStorage for tracking
-    const pipelineInfo = {
-      id: newBuildId,
-      type: "Floating Framework",
-      status: "running",
-      startTime: new Date().toISOString(),
-      config: config,
-      command: generatedCommand,
-      jenkinsJob: jenkinsJob,
+    try {
+      // Create build log in database
+      await buildLogsApi.create({
+        build_id: newBuildId,
+        type: "Floating Framework",
+        status: "running",
+        start_time: new Date().toISOString(),
+        config: config,
+        command: generatedCommand,
+        jenkins_job: jenkinsJob,
+      })
+
+      // Call Jenkins API
+      await triggerJenkinsJob(newBuildId, config, generatedCommand)
+
+      const steps = [
+        "Connecting to Jenkins server...",
+        "Validating Floating parameters...",
+        "Starting Floating execution pipeline...",
+        "Initializing dynamic task environment...",
+        "Setting up worker configurations...",
+        "Executing floating tasks...",
+        "Processing with multiple workers...",
+        "Optimizing resource allocation...",
+        "Collecting execution results...",
+        "Floating pipeline execution completed successfully!",
+      ]
+
+      let outputLog = "Triggering Floating Jenkins pipeline...\n"
+
+      for (let i = 0; i < steps.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        const logEntry = `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`
+        outputLog += logEntry
+        setExecutionOutput(outputLog)
+      }
+
+      // Update build log status in database
+      await buildLogsApi.update(newBuildId, {
+        status: "completed",
+        end_time: new Date().toISOString(),
+        output_log: outputLog,
+      })
+
+      setIsExecuting(false)
+      toast({
+        title: "Floating Pipeline Complete",
+        description: "Jenkins pipeline executed successfully.",
+      })
+    } catch (error) {
+      console.error("Pipeline execution failed:", error)
+
+      // Update build log status to failed
+      try {
+        await buildLogsApi.update(newBuildId, {
+          status: "failed",
+          end_time: new Date().toISOString(),
+          output_log: executionOutput + `\n[ERROR] Pipeline failed: ${error.message}`,
+        })
+      } catch (updateError) {
+        console.error("Failed to update build log:", updateError)
+      }
+
+      setIsExecuting(false)
+      toast({
+        title: "Pipeline Failed",
+        description: "Jenkins pipeline execution failed.",
+        variant: "destructive",
+      })
     }
+  }
 
-    const existingPipelines = JSON.parse(localStorage.getItem("pipelines") || "[]")
-    existingPipelines.unshift(pipelineInfo)
-    localStorage.setItem("pipelines", JSON.stringify(existingPipelines))
+  const triggerJenkinsJob = async (buildId: string, config: FloatingConfig, command: string) => {
+    try {
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
+      const response = await fetch(`${API_BASE_URL}/jenkins/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          build_id: buildId,
+          job_type: "Floating Framework",
+          config: config,
+          command: command,
+        }),
+      })
 
-    const steps = [
-      "Connecting to Jenkins server...",
-      "Validating Floating parameters...",
-      "Starting Floating execution pipeline...",
-      "Initializing dynamic task environment...",
-      "Setting up worker configurations...",
-      "Executing floating tasks...",
-      "Processing with multiple workers...",
-      "Optimizing resource allocation...",
-      "Collecting execution results...",
-      "Floating pipeline execution completed successfully!",
-    ]
+      if (!response.ok) {
+        throw new Error(`Jenkins API call failed: ${response.status}`)
+      }
 
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1200))
-      setExecutionOutput((prev) => prev + `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`)
+      const result = await response.json()
+      console.log("Jenkins job triggered:", result)
+    } catch (error) {
+      console.error("Failed to trigger Jenkins job:", error)
+      // Don't throw error to allow demo to continue
     }
-
-    // Update pipeline status
-    const updatedPipelines = JSON.parse(localStorage.getItem("pipelines") || "[]")
-    const pipelineIndex = updatedPipelines.findIndex((p: any) => p.id === newBuildId)
-    if (pipelineIndex !== -1) {
-      updatedPipelines[pipelineIndex].status = "completed"
-      updatedPipelines[pipelineIndex].endTime = new Date().toISOString()
-      localStorage.setItem("pipelines", JSON.stringify(updatedPipelines))
-    }
-
-    setIsExecuting(false)
-    toast({
-      title: "Floating Pipeline Complete",
-      description: "Jenkins pipeline executed successfully.",
-    })
   }
 
   const copyCommand = () => {

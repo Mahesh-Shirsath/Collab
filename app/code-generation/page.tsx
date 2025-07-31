@@ -1,15 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { ArrowLeft, Copy, Download, Sparkles, Code, FileText } from "lucide-react"
+import { ArrowLeft, Copy, Download, Sparkles, Code, FileText, Trash2, Wifi, WifiOff } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { generatedCodeApi, checkApiHealth, type GeneratedCodeResponse } from "@/lib/api"
 
 interface GeneratedCode {
   id: string
@@ -25,7 +26,9 @@ export default function CodeGenerationPage() {
   const [selectedLanguage, setSelectedLanguage] = useState("javascript")
   const [selectedType, setSelectedType] = useState("function")
   const [isGenerating, setIsGenerating] = useState(false)
-  const [generatedCodes, setGeneratedCodes] = useState<GeneratedCode[]>([])
+  const [generatedCodes, setGeneratedCodes] = useState<GeneratedCodeResponse[]>([])
+  const [isOnline, setIsOnline] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
   const { toast } = useToast()
 
   const languages = [
@@ -50,6 +53,49 @@ export default function CodeGenerationPage() {
     { value: "script", label: "Script" },
   ]
 
+  // Check API status and load generated codes on component mount
+  useEffect(() => {
+    const initializeData = async () => {
+      setIsLoading(true)
+      try {
+        // Check if API is available
+        const apiStatus = await checkApiHealth()
+        setIsOnline(apiStatus)
+
+        // Load generated codes
+        const codes = await generatedCodeApi.getAll({ limit: 10 })
+        setGeneratedCodes(codes)
+
+        if (!apiStatus) {
+          toast({
+            title: "Offline Mode",
+            description: "API is not available. Using local storage for demo purposes.",
+            variant: "default",
+          })
+        }
+      } catch (error) {
+        console.error("Failed to initialize:", error)
+        setIsOnline(false)
+        // Try to load from localStorage as fallback
+        try {
+          const codes = await generatedCodeApi.getAll({ limit: 10 })
+          setGeneratedCodes(codes)
+        } catch (fallbackError) {
+          console.error("Fallback also failed:", fallbackError)
+          toast({
+            title: "Initialization Failed",
+            description: "Could not load generated codes. Starting fresh.",
+            variant: "destructive",
+          })
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    initializeData()
+  }, [toast])
+
   const generateCode = async () => {
     if (!prompt.trim()) {
       toast({
@@ -62,31 +108,66 @@ export default function CodeGenerationPage() {
 
     setIsGenerating(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    try {
+      // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 2000))
 
-    const mockCode = generateMockCode(prompt, selectedLanguage, selectedType)
+      const mockCode = generateMockCode(prompt, selectedLanguage, selectedType)
 
-    const newCode: GeneratedCode = {
-      id: Date.now().toString(),
-      language: selectedLanguage,
-      type: selectedType,
-      code: mockCode,
-      description: prompt,
-      timestamp: new Date(),
+      // Save to database/localStorage
+      const result = await generatedCodeApi.create({
+        language: selectedLanguage,
+        type: selectedType,
+        code: mockCode,
+        description: prompt,
+      })
+
+      // Refresh the list
+      const updatedCodes = await generatedCodeApi.getAll({ limit: 10 })
+      setGeneratedCodes(updatedCodes)
+
+      setPrompt("")
+      setIsGenerating(false)
+
+      toast({
+        title: "Code Generated",
+        description: `${selectedLanguage} ${selectedType} has been generated and saved${!isOnline ? " (offline mode)" : ""}.`,
+      })
+    } catch (error) {
+      console.error("Code generation failed:", error)
+      setIsGenerating(false)
+      toast({
+        title: "Generation Failed",
+        description: "Failed to generate and save code. Please try again.",
+        variant: "destructive",
+      })
     }
+  }
 
-    setGeneratedCodes((prev) => [newCode, ...prev])
-    setPrompt("")
-    setIsGenerating(false)
+  const deleteCode = async (codeId: string) => {
+    try {
+      await generatedCodeApi.delete(codeId)
 
-    toast({
-      title: "Code Generated",
-      description: `${selectedLanguage} ${selectedType} has been generated successfully.`,
-    })
+      // Refresh the list
+      const updatedCodes = await generatedCodeApi.getAll({ limit: 10 })
+      setGeneratedCodes(updatedCodes)
+
+      toast({
+        title: "Code Deleted",
+        description: `Generated code has been deleted successfully${!isOnline ? " (offline mode)" : ""}.`,
+      })
+    } catch (error) {
+      console.error("Delete failed:", error)
+      toast({
+        title: "Delete Failed",
+        description: "Failed to delete generated code. Please try again.",
+        variant: "destructive",
+      })
+    }
   }
 
   const generateMockCode = (prompt: string, language: string, type: string): string => {
+    // Your existing generateMockCode function remains the same
     const lowerPrompt = prompt.toLowerCase()
 
     if (language === "javascript") {
@@ -127,55 +208,108 @@ const result = processData(sampleData);
 console.log(result);`
       }
 
-      if (type === "api") {
-        return `// Generated Express.js API endpoint based on: "${prompt}"
-const express = require('express');
-const router = express.Router();
+      if (type === "component") {
+        return `// Generated React component based on: "${prompt}"
+import React, { useState, useEffect } from 'react';
 
-// Middleware for validation
-const validateRequest = (req, res, next) => {
-    const { body } = req;
-    
-    if (!body || Object.keys(body).length === 0) {
-        return res.status(400).json({
-            error: 'Request body is required'
-        });
+const CustomComponent = ({ 
+  title = "Default Title",
+  data = [],
+  onItemClick,
+  className = "",
+  ...props 
+}) => {
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    // Component initialization logic
+    console.log('Component mounted with data:', data);
+  }, [data]);
+
+  const handleItemClick = (item, index) => {
+    setSelectedItem(item);
+    if (onItemClick) {
+      onItemClick(item, index);
     }
-    
-    next();
+  };
+
+  const handleAction = async (action, item) => {
+    setIsLoading(true);
+    try {
+      // Simulate async operation
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log(\`Action \${action} performed on:\`, item);
+    } catch (error) {
+      console.error('Action failed:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className={\`custom-component \${className}\`} {...props}>
+      <header className="component-header">
+        <h2>{title}</h2>
+        {isLoading && <span className="loading-indicator">Loading...</span>}
+      </header>
+      
+      <main className="component-content">
+        {data.length === 0 ? (
+          <div className="empty-state">
+            <p>No data available</p>
+          </div>
+        ) : (
+          <ul className="data-list">
+            {data.map((item, index) => (
+              <li 
+                key={item.id || index}
+                className={\`data-item \${selectedItem?.id === item.id ? 'selected' : ''}\`}
+                onClick={() => handleItemClick(item, index)}
+              >
+                <div className="item-content">
+                  <h3>{item.name || item.title || \`Item \${index + 1}\`}</h3>
+                  {item.description && <p>{item.description}</p>}
+                </div>
+                <div className="item-actions">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAction('edit', item);
+                    }}
+                    disabled={isLoading}
+                  >
+                    Edit
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAction('delete', item);
+                    }}
+                    disabled={isLoading}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </main>
+      
+      {selectedItem && (
+        <footer className="component-footer">
+          <div className="selected-info">
+            <h4>Selected: {selectedItem.name || 'Unknown'}</h4>
+            <pre>{JSON.stringify(selectedItem, null, 2)}</pre>
+          </div>
+        </footer>
+      )}
+    </div>
+  );
 };
 
-// Main API endpoint
-router.post('/api/process', validateRequest, async (req, res) => {
-    try {
-        const { data } = req.body;
-        
-        // Process the request
-        const processedData = {
-            id: Date.now(),
-            originalData: data,
-            processed: true,
-            timestamp: new Date().toISOString()
-        };
-        
-        // Simulate async processing
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        res.status(200).json({
-            success: true,
-            data: processedData
-        });
-        
-    } catch (error) {
-        console.error('API Error:', error);
-        res.status(500).json({
-            error: 'Internal server error',
-            message: error.message
-        });
-    }
-});
-
-module.exports = router;`
+export default CustomComponent;`
       }
     }
 
@@ -229,168 +363,6 @@ if __name__ == "__main__":
     result = process_data(sample_data)
     print(json.dumps(result, indent=2))`
       }
-
-      if (type === "class") {
-        return `# Generated Python class based on: "${prompt}"
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-import logging
-
-class DataProcessor:
-    """
-    A class for processing and managing data operations.
-    """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize the DataProcessor.
-        
-        Args:
-            config: Optional configuration dictionary
-        """
-        self.config = config or {}
-        self.processed_items: List[Dict[str, Any]] = []
-        self.logger = logging.getLogger(__name__)
-        
-    def add_item(self, item: Dict[str, Any]) -> bool:
-        """
-        Add an item to be processed.
-        
-        Args:
-            item: Dictionary containing item data
-            
-        Returns:
-            True if item was added successfully
-        """
-        try:
-            validated_item = self._validate_item(item)
-            self.processed_items.append(validated_item)
-            self.logger.info(f"Added item: {validated_item.get('id', 'unknown')}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add item: {e}")
-            return False
-    
-    def process_all(self) -> List[Dict[str, Any]]:
-        """
-        Process all added items.
-        
-        Returns:
-            List of processed items
-        """
-        results = []
-        for item in self.processed_items:
-            processed_item = self._process_item(item)
-            results.append(processed_item)
-        
-        return results
-    
-    def _validate_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate and prepare item for processing."""
-        if not isinstance(item, dict):
-            raise ValueError("Item must be a dictionary")
-        
-        return {
-            **item,
-            "added_at": datetime.now().isoformat(),
-            "status": "pending"
-        }
-    
-    def _process_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a single item."""
-        return {
-            **item,
-            "processed_at": datetime.now().isoformat(),
-            "status": "completed"
-        }
-
-# Usage example
-if __name__ == "__main__":
-    processor = DataProcessor({"debug": True})
-    processor.add_item({"id": 1, "name": "test item"})
-    results = processor.process_all()
-    print(results)`
-      }
-    }
-
-    if (language === "java") {
-      if (type === "class") {
-        return `// Generated Java class based on: "${prompt}"
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.logging.Logger;
-
-public class DataProcessor {
-    private static final Logger logger = Logger.getLogger(DataProcessor.class.getName());
-    private final Map<String, Object> config;
-    private final List<Map<String, Object>> processedItems;
-    
-    public DataProcessor() {
-        this(new HashMap<>());
-    }
-    
-    public DataProcessor(Map<String, Object> config) {
-        this.config = config;
-        this.processedItems = new ArrayList<>();
-    }
-    
-    public boolean addItem(Map<String, Object> item) {
-        try {
-            Map<String, Object> validatedItem = validateItem(item);
-            processedItems.add(validatedItem);
-            logger.info("Added item: " + validatedItem.getOrDefault("id", "unknown"));
-            return true;
-        } catch (Exception e) {
-            logger.severe("Failed to add item: " + e.getMessage());
-            return false;
-        }
-    }
-    
-    public List<Map<String, Object>> processAll() {
-        List<Map<String, Object>> results = new ArrayList<>();
-        for (Map<String, Object> item : processedItems) {
-            Map<String, Object> processedItem = processItem(item);
-            results.add(processedItem);
-        }
-        return results;
-    }
-    
-    private Map<String, Object> validateItem(Map<String, Object> item) {
-        if (item == null) {
-            throw new IllegalArgumentException("Item cannot be null");
-        }
-        
-        Map<String, Object> validatedItem = new HashMap<>(item);
-        validatedItem.put("addedAt", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        validatedItem.put("status", "pending");
-        
-        return validatedItem;
-    }
-    
-    private Map<String, Object> processItem(Map<String, Object> item) {
-        Map<String, Object> processedItem = new HashMap<>(item);
-        processedItem.put("processedAt", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        processedItem.put("status", "completed");
-        
-        return processedItem;
-    }
-    
-    // Usage example
-    public static void main(String[] args) {
-        DataProcessor processor = new DataProcessor();
-        
-        Map<String, Object> item = new HashMap<>();
-        item.put("id", 1);
-        item.put("name", "test item");
-        
-        processor.addItem(item);
-        List<Map<String, Object>> results = processor.processAll();
-        
-        System.out.println(results);
-    }
-}`
-      }
     }
 
     // Default fallback
@@ -409,7 +381,7 @@ console.log("Generated code for: ${prompt}");`
     })
   }
 
-  const downloadCode = (code: GeneratedCode) => {
+  const downloadCode = (code: GeneratedCodeResponse) => {
     const extension = getFileExtension(code.language)
     const blob = new Blob([code.code], { type: "text/plain" })
     const url = URL.createObjectURL(blob)
@@ -444,6 +416,20 @@ console.log("Generated code for: ${prompt}");`
     "Generate a configuration parser",
   ]
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-slate-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Code className="w-8 h-8 text-orange-600 animate-pulse" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">Loading Code Generator...</h3>
+          <p className="text-gray-600">Initializing the application</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-slate-100">
       {/* Header */}
@@ -467,18 +453,27 @@ console.log("Generated code for: ${prompt}");`
                 </div>
               </div>
             </div>
-            <Badge variant="secondary" className="bg-orange-100 text-orange-800">
-              AI Ready
-            </Badge>
+            <div className="flex items-center space-x-2">
+              <Badge variant="secondary" className="bg-orange-100 text-orange-800">
+                AI Ready
+              </Badge>
+              <Badge
+                variant={isOnline ? "default" : "secondary"}
+                className={isOnline ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}
+              >
+                {isOnline ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
+                {isOnline ? "Online" : "Offline"}
+              </Badge>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="flex flex-col xl:flex-row gap-6">
           {/* Generation Panel */}
-          <div className="lg:col-span-1 space-y-6">
+          <div className="xl:w-1/3 space-y-6">
             <Card className="border-orange-200">
               <CardHeader>
                 <CardTitle className="text-orange-900 flex items-center space-x-2">
@@ -542,17 +537,17 @@ console.log("Generated code for: ${prompt}");`
               <CardHeader>
                 <CardTitle className="text-sm">Quick Prompts</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="max-h-64 overflow-y-auto">
                 <div className="space-y-2">
                   {quickPrompts.map((quickPrompt, index) => (
                     <Button
                       key={index}
                       variant="ghost"
                       size="sm"
-                      className="w-full justify-start text-left h-auto p-2 text-xs"
+                      className="w-full justify-start text-left h-auto p-2 text-xs hover:bg-orange-50"
                       onClick={() => setPrompt(quickPrompt)}
                     >
-                      {quickPrompt}
+                      <span className="line-clamp-2">{quickPrompt}</span>
                     </Button>
                   ))}
                 </div>
@@ -561,7 +556,7 @@ console.log("Generated code for: ${prompt}");`
           </div>
 
           {/* Generated Code Display */}
-          <div className="lg:col-span-2">
+          <div className="xl:w-2/3">
             <Card className="h-[800px] flex flex-col">
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
@@ -569,9 +564,9 @@ console.log("Generated code for: ${prompt}");`
                   <span>Generated Code</span>
                   {generatedCodes.length > 0 && <Badge variant="outline">{generatedCodes.length} items</Badge>}
                 </CardTitle>
-                <CardDescription>Your generated code will appear here</CardDescription>
+                <CardDescription>Your generated code will appear here {!isOnline && "(offline mode)"}</CardDescription>
               </CardHeader>
-              <CardContent className="flex-1 flex flex-col">
+              <CardContent className="flex-1 flex flex-col min-h-0">
                 {generatedCodes.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center text-center">
                     <div className="space-y-4">
@@ -587,19 +582,21 @@ console.log("Generated code for: ${prompt}");`
                     </div>
                   </div>
                 ) : (
-                  <ScrollArea className="flex-1">
-                    <div className="space-y-6">
+                  <ScrollArea className="flex-1 min-h-0">
+                    <div className="space-y-6 pr-4">
                       {generatedCodes.map((code) => (
                         <div key={code.id} className="border rounded-lg p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center space-x-2 flex-wrap">
                               <Badge variant="outline" className="capitalize">
                                 {code.language}
                               </Badge>
                               <Badge variant="secondary" className="capitalize">
                                 {code.type}
                               </Badge>
-                              <span className="text-xs text-gray-500">{code.timestamp.toLocaleString()}</span>
+                              <span className="text-xs text-gray-500">
+                                {new Date(code.created_at).toLocaleString()}
+                              </span>
                             </div>
                             <div className="flex items-center space-x-2">
                               <Button
@@ -618,11 +615,19 @@ console.log("Generated code for: ${prompt}");`
                               >
                                 <Download className="w-4 h-4" />
                               </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => deleteCode(code.id)}
+                                className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
                             </div>
                           </div>
-                          <p className="text-sm text-gray-600">{code.description}</p>
-                          <div className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
-                            <pre className="text-sm">
+                          <p className="text-sm text-gray-600 break-words">{code.description}</p>
+                          <div className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-auto">
+                            <pre className="text-sm whitespace-pre-wrap break-words">
                               <code>{code.code}</code>
                             </pre>
                           </div>

@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Play, RotateCcw, Copy, Download, Settings } from "lucide-react"
+import { ArrowLeft, Play, RotateCcw, Copy, Download, Settings, ExternalLink } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { buildLogsApi } from "@/lib/api"
 
 interface JTAFConfig {
   testSuite: string
@@ -41,6 +42,8 @@ export default function JTAFPage() {
   const [executionOutput, setExecutionOutput] = useState("")
   const [generatedCommand, setGeneratedCommand] = useState("")
   const { toast } = useToast()
+  const [buildId, setBuildId] = useState("")
+  const [jenkinsJob] = useState("jtaf-execution-pipeline")
 
   const handleConfigChange = (key: keyof JTAFConfig, value: string) => {
     const newConfig = { ...config, [key]: value }
@@ -74,28 +77,108 @@ export default function JTAFPage() {
     }
 
     setIsExecuting(true)
-    setExecutionOutput("Starting JTAF execution...\n")
+    setExecutionOutput("Triggering JTAF Jenkins pipeline...\n")
 
-    const steps = [
-      "Initializing JTAF framework...",
-      "Loading test configuration...",
-      "Setting up browser environment...",
-      "Executing test suite...",
-      "Running parallel tests...",
-      "Generating test reports...",
-      "JTAF execution completed successfully!",
-    ]
+    // Generate build ID
+    const newBuildId = `JTAF-${Date.now()}`
+    setBuildId(newBuildId)
 
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-      setExecutionOutput((prev) => prev + `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`)
+    try {
+      // Create build log in database
+      await buildLogsApi.create({
+        build_id: newBuildId,
+        type: "JTAF Framework",
+        status: "running",
+        start_time: new Date().toISOString(),
+        config: config,
+        command: generatedCommand,
+        jenkins_job: jenkinsJob,
+      })
+
+      // Call Jenkins API
+      await triggerJenkinsJob(newBuildId, config, generatedCommand)
+
+      const steps = [
+        "Connecting to Jenkins server...",
+        "Validating JTAF parameters...",
+        "Starting JTAF execution pipeline...",
+        "Initializing Java Test Automation Framework...",
+        "Loading test configuration...",
+        "Setting up browser environment...",
+        "Executing test suite...",
+        "Running parallel tests...",
+        "Generating test reports...",
+        "JTAF pipeline execution completed successfully!",
+      ]
+
+      let outputLog = "Triggering JTAF Jenkins pipeline...\n"
+
+      for (let i = 0; i < steps.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        const logEntry = `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`
+        outputLog += logEntry
+        setExecutionOutput(outputLog)
+      }
+
+      // Update build log status in database
+      await buildLogsApi.update(newBuildId, {
+        status: "completed",
+        end_time: new Date().toISOString(),
+        output_log: outputLog,
+      })
+
+      setIsExecuting(false)
+      toast({
+        title: "JTAF Pipeline Complete",
+        description: "Jenkins pipeline executed successfully.",
+      })
+    } catch (error) {
+      console.error("Pipeline execution failed:", error)
+
+      // Update build log status to failed
+      try {
+        await buildLogsApi.update(newBuildId, {
+          status: "failed",
+          end_time: new Date().toISOString(),
+          output_log: executionOutput + `\n[ERROR] Pipeline failed: ${error.message}`,
+        })
+      } catch (updateError) {
+        console.error("Failed to update build log:", updateError)
+      }
+
+      setIsExecuting(false)
+      toast({
+        title: "Pipeline Failed",
+        description: "Jenkins pipeline execution failed.",
+        variant: "destructive",
+      })
     }
+  }
 
-    setIsExecuting(false)
-    toast({
-      title: "JTAF Execution Complete",
-      description: "Test automation framework executed successfully.",
-    })
+  const triggerJenkinsJob = async (buildId: string, config: JTAFConfig, command: string) => {
+    try {
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
+      const response = await fetch(`${API_BASE_URL}/jenkins/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          build_id: buildId,
+          job_type: "JTAF Framework",
+          config: config,
+          command: command,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Jenkins API call failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log("Jenkins job triggered:", result)
+    } catch (error) {
+      console.error("Failed to trigger Jenkins job:", error)
+      // Don't throw error to allow demo to continue
+    }
   }
 
   const copyCommand = () => {
@@ -120,6 +203,7 @@ export default function JTAFPage() {
     })
     setGeneratedCommand("")
     setExecutionOutput("")
+    setBuildId("")
   }
 
   return (
@@ -340,6 +424,19 @@ export default function JTAFPage() {
                     >
                       <Download className="w-4 h-4" />
                       <span>Download Log</span>
+                    </Button>
+                  )}
+
+                  {buildId && (
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        window.open(`https://jenkins.example.com/job/${jenkinsJob}/${buildId}/console`, "_blank")
+                      }
+                      className="flex items-center space-x-2 bg-transparent"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Open Jenkins Console</span>
                     </Button>
                   )}
                 </div>

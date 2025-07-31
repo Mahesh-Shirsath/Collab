@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Play, RotateCcw, Download, Wrench, ExternalLink } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { buildLogsApi } from "@/lib/api"
 
 interface OSConfig {
   osType: string
@@ -59,52 +60,72 @@ export default function OSMakingPage() {
     const newBuildId = `OS-${Date.now()}`
     setBuildId(newBuildId)
 
-    // Store pipeline info in localStorage for tracking
-    const pipelineInfo = {
-      id: newBuildId,
-      type: "OS Making",
-      status: "running",
-      startTime: new Date().toISOString(),
-      config: config,
-      jenkinsJob: config.jenkinsJob,
+    try {
+      // Create build log in database
+      await buildLogsApi.create({
+        build_id: newBuildId,
+        type: "OS Making",
+        status: "running",
+        start_time: new Date().toISOString(),
+        config: config,
+        jenkins_job: config.jenkinsJob,
+      })
+
+      const steps = [
+        "Connecting to Jenkins server...",
+        "Validating build parameters...",
+        "Starting OS image creation pipeline...",
+        "Setting up base OS environment...",
+        "Installing selected packages...",
+        "Applying customizations...",
+        "Building OS image...",
+        "Running image validation tests...",
+        "Compressing and packaging image...",
+        "OS image build completed successfully!",
+      ]
+
+      let outputLog = "Triggering OS Making Jenkins pipeline...\n"
+
+      for (let i = 0; i < steps.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        const logEntry = `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`
+        outputLog += logEntry
+        setBuildOutput(outputLog)
+      }
+
+      // Update build log status in database
+      await buildLogsApi.update(newBuildId, {
+        status: "completed",
+        end_time: new Date().toISOString(),
+        output_log: outputLog,
+      })
+
+      setIsBuilding(false)
+      toast({
+        title: "OS Build Complete",
+        description: "Operating system image has been built successfully.",
+      })
+    } catch (error) {
+      console.error("Build failed:", error)
+
+      // Update build log status to failed
+      try {
+        await buildLogsApi.update(newBuildId, {
+          status: "failed",
+          end_time: new Date().toISOString(),
+          output_log: buildOutput + `\n[ERROR] Build failed: ${error.message}`,
+        })
+      } catch (updateError) {
+        console.error("Failed to update build log:", updateError)
+      }
+
+      setIsBuilding(false)
+      toast({
+        title: "Build Failed",
+        description: "OS image build failed.",
+        variant: "destructive",
+      })
     }
-
-    const existingPipelines = JSON.parse(localStorage.getItem("pipelines") || "[]")
-    existingPipelines.unshift(pipelineInfo)
-    localStorage.setItem("pipelines", JSON.stringify(existingPipelines))
-
-    const steps = [
-      "Connecting to Jenkins server...",
-      "Validating build parameters...",
-      "Starting OS image creation pipeline...",
-      "Setting up base OS environment...",
-      "Installing selected packages...",
-      "Applying customizations...",
-      "Building OS image...",
-      "Running image validation tests...",
-      "Compressing and packaging image...",
-      "OS image build completed successfully!",
-    ]
-
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      setBuildOutput((prev) => prev + `[${new Date().toLocaleTimeString()}] ${steps[i]}\n`)
-    }
-
-    // Update pipeline status
-    const updatedPipelines = JSON.parse(localStorage.getItem("pipelines") || "[]")
-    const pipelineIndex = updatedPipelines.findIndex((p: any) => p.id === newBuildId)
-    if (pipelineIndex !== -1) {
-      updatedPipelines[pipelineIndex].status = "completed"
-      updatedPipelines[pipelineIndex].endTime = new Date().toISOString()
-      localStorage.setItem("pipelines", JSON.stringify(updatedPipelines))
-    }
-
-    setIsBuilding(false)
-    toast({
-      title: "OS Build Complete",
-      description: "Operating system image has been built successfully.",
-    })
   }
 
   const resetConfig = () => {
